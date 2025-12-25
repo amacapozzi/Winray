@@ -20,7 +20,7 @@ var (
 	uiWv      webview.WebView
 )
 
-const UI_PATH = "http://localhost:5173"
+const UI_PATH = "https://winray.vercel.app/"
 
 type UI struct{}
 
@@ -29,20 +29,35 @@ func New() *UI {
 }
 
 func (ui *UI) Open() {
+
 	uiMu.Lock()
 	defer uiMu.Unlock()
 
 	if uiRunning.Load() {
 		return
 	}
+	go func() {
+		// Esperamos un poco (ej. 500ms o 1 segundo) para asegurar
+		// que la ventana gráfica ya se creó y es visible.
+		time.Sleep(1 * time.Second)
+
+		// Esta función buscará tu ventana por el ID del proceso,
+		// le quitará los bordes y la pondrá "Always on Top".
+		windows.SetupAppWindow()
+	}()
 
 	go func() {
 		runtime.LockOSThread()
 
-		w := webview.New(false)
+		w := webview.NewWithOptions(webview.WebViewOptions{
+			Debug:     false,
+			AutoFocus: true,
+			WindowOptions: webview.WindowOptions{
+				Center: true,
+			},
+		})
 		uiWv = w
 		uiRunning.Store(true)
-		
 
 		w.SetSize(450, 420, webview.HintFixed)
 

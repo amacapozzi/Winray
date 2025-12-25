@@ -1,6 +1,8 @@
 package windows
 
 import (
+	"os"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -23,13 +25,17 @@ var (
 	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
 	procSetWindowLongPtrW = user32.NewProc("SetWindowLongPtrW")
 
-	procGetClientRect = user32.NewProc("GetClientRect")
-	procFindWindowExW = user32.NewProc("FindWindowExW")
-	procMoveWindow    = user32.NewProc("MoveWindow")
+	procGetClientRect    = user32.NewProc("GetClientRect")
+	procFindWindowExW    = user32.NewProc("FindWindowExW")
+	procMoveWindow       = user32.NewProc("MoveWindow")
+	procBringWindowToTop = user32.NewProc("BringWindowToTop")
+	procShowWindow       = user32.NewProc("ShowWindow")
 
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	procBringWindowToTop    = user32.NewProc("BringWindowToTop")
-	procShowWindow          = user32.NewProc("ShowWindow")
+
+	procEnumWindows              = user32.NewProc("EnumWindows")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 )
 
 type RECT struct {
@@ -49,6 +55,7 @@ const (
 	SWP_NOSIZE       = 0x0001
 	SWP_NOZORDER     = 0x0004
 	SWP_FRAMECHANGED = 0x0020
+	SWP_SHOWWINDOW   = 0x0040
 )
 
 type MSG struct {
@@ -58,6 +65,51 @@ type MSG struct {
 	LParam  uintptr
 	Time    uint32
 	Pt      struct{ X, Y int32 }
+}
+
+func SetupAppWindow() {
+	pid := uint32(os.Getpid())
+
+	hwnd := GetWindowHandleByPID(pid)
+	if hwnd == 0 {
+		return
+	}
+	SetWindowTopMost(hwnd)
+}
+
+func SetWindowTopMost(hwnd uintptr) {
+	hwndTopMost := ^uintptr(0)
+
+	procSetWindowPos.Call(
+		hwnd,
+		hwndTopMost,
+		0, 0, 0, 0,
+		uintptr(SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW),
+	)
+
+	SetForegroundWindow(hwnd)
+	procBringWindowToTop.Call(hwnd)
+}
+
+func GetWindowHandleByPID(targetPID uint32) uintptr {
+	var foundHwnd uintptr = 0
+
+	cb := syscall.NewCallback(func(hwnd uintptr, lParam uintptr) uintptr {
+		var wndPid uint32
+		procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&wndPid)))
+
+		if wndPid == targetPID {
+			isVisible, _, _ := procIsWindowVisible.Call(hwnd)
+			if isVisible != 0 {
+				foundHwnd = hwnd
+				return 0
+			}
+		}
+		return 1
+	})
+
+	procEnumWindows.Call(cb, 0)
+	return foundHwnd
 }
 
 func RegisterHotKey(hwnd uintptr, id int, mod uint32, vk uint32) bool {
@@ -106,11 +158,6 @@ func SetForegroundWindow(hwnd uintptr) bool {
 	return ret != 0
 }
 
-func BringWindowToTop(hwnd uintptr) bool {
-	ret, _, _ := procBringWindowToTop.Call(hwnd)
-	return ret != 0
-}
-
 func ShowWindow(hwnd uintptr, nCmdShow int) bool {
 	ret, _, _ := procShowWindow.Call(hwnd, uintptr(nCmdShow))
 	return ret != 0
@@ -122,25 +169,35 @@ func MakeFramelessAndFitWebView(hwnd uintptr) {
 	fitWebViewChildToClient(hwnd)
 }
 
-func HideTitleBar(hwnd uintptr) {
-	MakeFramelessAndFitWebView(hwnd)
-}
-
 func hideTitleBar(hwnd uintptr) {
 	style := getStyle(hwnd)
 
+	// Quitamos CAPTION (la barra azul/blanca con el título)
 	style &^= WS_CAPTION
+
+	// Quitamos SYSMENU (los botones cerrar/min/max)
 	style &^= WS_SYSMENU
+
+	// ¡IMPORTANTE! Quitamos THICKFRAME.
+	// Este es el culpable de ese marco blanco grueso que ves en la foto.
 	style &^= WS_THICKFRAME
+
+	// Quitamos cualquier otro borde estándar
+	style &^= 0x00800000 // WS_BORDER
+
 	style &^= WS_MINIMIZEBOX
 	style &^= WS_MAXIMIZEBOX
 
 	setStyle(hwnd, style)
+
+	// Opcional: Agregar un estilo extendido para que tenga sombra (si quieres)
+	// o dejarlo plano. Por ahora, plano para arreglar el error visual.
 }
 
 func applyFrameChanged(hwnd uintptr) {
 	procSetWindowPos.Call(
 		hwnd,
+		0,
 		0,
 		0,
 		0,
