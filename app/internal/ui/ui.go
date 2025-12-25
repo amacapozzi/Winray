@@ -36,15 +36,6 @@ func (ui *UI) Open() {
 	if uiRunning.Load() {
 		return
 	}
-	go func() {
-		// Esperamos un poco (ej. 500ms o 1 segundo) para asegurar
-		// que la ventana gráfica ya se creó y es visible.
-		time.Sleep(1 * time.Second)
-
-		// Esta función buscará tu ventana por el ID del proceso,
-		// le quitará los bordes y la pondrá "Always on Top".
-		windows.SetupAppWindow()
-	}()
 
 	go func() {
 		runtime.LockOSThread()
@@ -56,6 +47,7 @@ func (ui *UI) Open() {
 				Center: true,
 			},
 		})
+		windows.SetWindowTopMost(uintptr(w.Window()))
 		uiWv = w
 		uiRunning.Store(true)
 
